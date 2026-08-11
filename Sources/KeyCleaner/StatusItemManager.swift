@@ -77,7 +77,9 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         quitItem.isEnabled = true
         menu.addItem(quitItem)
         
-        statusItem.menu = menu
+        // Keep the menu detached so the status-item button receives both left- and
+        // right-click actions. Assigning it to statusItem.menu makes AppKit open the
+        // menu directly and bypass statusItemClicked(_:).
     }
     
     private func observeBlocker() {
@@ -157,7 +159,7 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         if event?.type == .rightMouseUp {
             KeyboardBlocker.shared.toggleLock()
         } else {
-            statusItem.menu?.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         }
     }
     
