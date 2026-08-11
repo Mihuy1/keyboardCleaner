@@ -65,7 +65,7 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         
         // Permission Status / Fix
-        permissionMenuItem = NSMenuItem(title: "Check Accessibility Permission", action: nil, keyEquivalent: "")
+        permissionMenuItem = NSMenuItem(title: "Checking Keyboard Blocking Availability...", action: nil, keyEquivalent: "")
         permissionMenuItem.isEnabled = false
         menu.addItem(permissionMenuItem)
         
@@ -88,7 +88,7 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         blocker.$isLocked
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isLocked in
-                self?.updateUI(isLocked: isLocked, blockedCount: blocker.blockedCount, hasPermission: blocker.hasPermission)
+                self?.updateUI(isLocked: isLocked, blockedCount: blocker.blockedCount, availability: blocker.eventTapAvailability)
                 
                 if isLocked {
                     LockOverlayWindow.shared.showHUD()
@@ -101,19 +101,19 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         blocker.$blockedCount
             .receive(on: DispatchQueue.main)
             .sink { [weak self] count in
-                self?.updateUI(isLocked: blocker.isLocked, blockedCount: count, hasPermission: blocker.hasPermission)
+                self?.updateUI(isLocked: blocker.isLocked, blockedCount: count, availability: blocker.eventTapAvailability)
             }
             .store(in: &cancellables)
         
-        blocker.$hasPermission
+        blocker.$eventTapAvailability
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] hasPermission in
-                self?.updateUI(isLocked: blocker.isLocked, blockedCount: blocker.blockedCount, hasPermission: hasPermission)
+            .sink { [weak self] availability in
+                self?.updateUI(isLocked: blocker.isLocked, blockedCount: blocker.blockedCount, availability: availability)
             }
             .store(in: &cancellables)
     }
     
-    private func updateUI(isLocked: Bool, blockedCount: Int, hasPermission: Bool) {
+    private func updateUI(isLocked: Bool, blockedCount: Int, availability: EventTapAvailability) {
         guard let button = statusItem.button else { return }
         
         if isLocked {
@@ -136,13 +136,20 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         
         countMenuItem.title = "Blocked Keypresses: \(blockedCount)"
         
-        if hasPermission {
-            permissionMenuItem.title = "Accessibility Permission: Granted ✅"
+        if availability == .available {
+            permissionMenuItem.title = "Keyboard Blocking: Available ✅"
             permissionMenuItem.target = nil
             permissionMenuItem.action = nil
             permissionMenuItem.isEnabled = false
         } else {
-            permissionMenuItem.title = "⚠️ Grant Accessibility Permission in System Settings..."
+            switch availability {
+            case .accessibilityRequired:
+                permissionMenuItem.title = "⚠️ Keyboard Blocking Unavailable — Grant Accessibility Access..."
+            case .unavailable:
+                permissionMenuItem.title = "⚠️ Keyboard Blocking Unavailable — Open Accessibility Settings..."
+            case .available:
+                break
+            }
             permissionMenuItem.target = self
             permissionMenuItem.action = #selector(permissionClicked)
             permissionMenuItem.isEnabled = true
@@ -150,11 +157,11 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
     }
     
     func menuWillOpen(_ menu: NSMenu) {
-        KeyboardBlocker.shared.checkPermission()
+        KeyboardBlocker.shared.refreshEventTapAvailability()
     }
     
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
-        KeyboardBlocker.shared.checkPermission()
+        KeyboardBlocker.shared.refreshEventTapAvailability()
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp {
             KeyboardBlocker.shared.toggleLock()
@@ -168,7 +175,7 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
     }
     
     @objc private func permissionClicked() {
-        KeyboardBlocker.shared.promptPermission()
+        KeyboardBlocker.shared.openAccessibilitySettings()
     }
     
     @objc private func quitClicked() {

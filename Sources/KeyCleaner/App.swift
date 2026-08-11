@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Initialize Status Item Manager
         _ = StatusItemManager.shared
         
-        // Quietly check system permissions
-        KeyboardBlocker.shared.checkPermission()
+        // Quietly check whether the active keyboard event tap is available
+        KeyboardBlocker.shared.refreshEventTapAvailability()
     }
 }

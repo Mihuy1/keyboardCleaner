@@ -3,28 +3,43 @@ import CoreGraphics
 import ApplicationServices
 import AppKit
 
+enum EventTapAvailability: Equatable {
+    case available
+    case accessibilityRequired
+    case unavailable
+}
+
 final class KeyboardBlocker: ObservableObject {
     static let shared = KeyboardBlocker()
     
     @Published var isLocked: Bool = false
     @Published var blockedCount: Int = 0
-    @Published var hasPermission: Bool = false
+    @Published private(set) var eventTapAvailability: EventTapAvailability = .unavailable
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var previousFlags: CGEventFlags = []
     
     private init() {
-        checkPermission()
+        refreshEventTapAvailability()
     }
     
     @discardableResult
-    func checkPermission() -> Bool {
-        let trusted = AXIsProcessTrusted() || CGPreflightListenEventAccess()
-        DispatchQueue.main.async {
-            self.hasPermission = trusted
+    func refreshEventTapAvailability() -> EventTapAvailability {
+        let availability: EventTapAvailability
+
+        if eventTap != nil || canCreateActiveKeyboardTap() {
+            availability = .available
+        } else if !AXIsProcessTrusted() {
+            availability = .accessibilityRequired
+        } else {
+            availability = .unavailable
         }
-        return trusted
+
+        DispatchQueue.main.async {
+            self.eventTapAvailability = availability
+        }
+        return availability
     }
     
     func toggleLock() {
@@ -38,18 +53,20 @@ final class KeyboardBlocker: ObservableObject {
     func lock() {
         guard !isLocked else { return }
         
-        if !checkPermission() {
-            promptPermission()
+        let availability = refreshEventTapAvailability()
+        guard availability == .available else {
+            if availability == .accessibilityRequired {
+                requestAccessibilityPermission()
+            }
             return
         }
         
         if !startEventTap() {
-            DispatchQueue.main.async { self.hasPermission = false }
-            promptPermission()
+            DispatchQueue.main.async { self.eventTapAvailability = .unavailable }
             return
         }
         
-        DispatchQueue.main.async { self.hasPermission = true }
+        DispatchQueue.main.async { self.eventTapAvailability = .available }
         isLocked = true
         blockedCount = 0
     }
@@ -60,9 +77,38 @@ final class KeyboardBlocker: ObservableObject {
         isLocked = false
     }
     
-    func promptPermission() {
+    func requestAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func canCreateActiveKeyboardTap() -> Bool {
+        // Probe with keyDown only. If Accessibility access is missing, macOS removes
+        // keyboard events from an active tap's mask and creation returns nil.
+        let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        guard let probeTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: eventMask,
+            callback: { _, _, event, _ in
+                Unmanaged.passUnretained(event)
+            },
+            userInfo: nil
+        ) else {
+            return false
+        }
+
+        CGEvent.tapEnable(tap: probeTap, enable: false)
+        CFMachPortInvalidate(probeTap)
+        return true
     }
     
     @discardableResult
